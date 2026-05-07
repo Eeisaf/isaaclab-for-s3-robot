@@ -1,0 +1,79 @@
+seed: 42  # 全局随机种子，用于保证实验可复现性
+
+# Models are instantiated using skrl's model instantiator utility
+# https://skrl.readthedocs.io/en/latest/api/utils/model_instantiators.html
+models:
+  separate: False  # 是否为策略网络(policy)和价值网络(value)使用独立的底层特征提取器（False表示两者网络结构独立，不共享权重）
+  policy:  # 策略网络(Actor)配置，用于输出动作
+    class: GaussianMixin  # 使用高斯混合模型分布，适合连续动作空间
+    clip_actions: False  # 是否在网络输出阶段对动作进行裁剪（在环境层面通常也会有裁剪，所以这里一般填False）
+    clip_log_std: True  # 是否限制对数标准差的范围，防止方差过大或过小
+    min_log_std: -20.0  # 对数标准差的下限
+    max_log_std: 2.0  # 对数标准差的上限
+    initial_log_std: 0.0  # 初始的对数标准差，0代表初始标准差为1（对应适度的探索噪声）
+    network:  # 策略网络的结构
+      - name: net
+        input: OBSERVATIONS  # 网络的输入数据：状态观测值
+        layers: [32, 32]  # 隐藏层结构，两层全连接层(MLP)，每层32个神经元
+        activations: elu  # 激活函数类型：elu (Exponential Linear Unit)
+    output: ACTIONS  # 网络的输出数据：动作
+  value:  # 价值网络(Critic)配置，用于预估当前状态的未来总收益
+    class: DeterministicMixin  # 确定性混合模型，因为价值网络只输出一个确定的评分标量
+    clip_actions: False
+    network:  # 价值网络的结构
+      - name: net
+        input: OBSERVATIONS  # 网络的输入数据：状态观测值
+        layers: [32, 32]  # 隐藏层结构，两层全连接层，每层32个神经元
+        activations: elu  # 激活函数类型：elu
+    output: ONE  # 网络的输出数据：一个标量值（状态的预测价值 V）
+
+
+# Rollout memory
+# https://skrl.readthedocs.io/en/latest/api/memories/random.html
+memory:
+  class: RandomMemory  # 经验回放池的类型，用于PPO等同策略(On-Policy)算法
+  memory_size: -1  # 经验池大小，设为-1会自动设置为与下文 agent.rollouts 相等的值
+
+
+# PPO agent configuration (field names are from PPO_DEFAULT_CONFIG)
+# https://skrl.readthedocs.io/en/latest/api/agents/ppo.html
+agent:
+  class: PPO  # 使用的强化学习算法：PPO (Proximal Policy Optimization)
+  rollouts: 32  # 每次策略更新前，在环境中收集的步数(steps/transitions)
+  learning_epochs: 8  # 每次收集完数据后，对这些数据进行几轮网络更新（复用数据的次数）
+  mini_batches: 8  # 在每轮更新中，将收集到的数据分成几个小批次(mini-batches)来进行梯度下降
+  discount_factor: 0.99  # 奖励折扣因子(gamma)，0.99表示重视长期回报
+  lambda: 0.95  # GAE (Generalized Advantage Estimation)的平滑参数，平衡偏差和方差
+  learning_rate: 5.0e-04  # 初始学习率 (0.0005)
+  learning_rate_scheduler: KLAdaptiveLR  # 学习率调度器类型，这里使用基于KL散度的自适应学习率
+  learning_rate_scheduler_kwargs:
+    kl_threshold: 0.008  # KL散度阈值，如果策略更新幅度超过此值，将自适应调小学习率
+  state_preprocessor: RunningStandardScaler  # 状态预处理器，自动在训练中对状态观测值进行标准化(减去均值，除以标准差)
+  state_preprocessor_kwargs: null  # 状态预处理器的额外参数
+  value_preprocessor: RunningStandardScaler  # 价值预处理器，对价值网络的输出进行标准化，有助于稳定训练
+  value_preprocessor_kwargs: null
+  random_timesteps: 0  # 训练开始前，执行完全随机动作的步数（用于初期暴力探索，这里不需要，设为0）
+  learning_starts: 0  # 收集多少步数据后才开始第一次网络更新（设为0表示收集满一个rollout立刻开始）
+  grad_norm_clip: 1.0  # 梯度裁剪的最大范数，防止梯度爆炸
+  ratio_clip: 0.2  # PPO的核心截断参数(epsilon)，限制新旧策略的比率在 [0.8, 1.2] 之间，防止单次更新步子迈太大
+  value_clip: 0.2  # 对价值函数的更新进行裁剪的范围，防止价值评估突变
+  clip_predicted_values: True  # 是否启用上述的价值网络裁剪
+  entropy_loss_scale: 0.0  # 熵正则化系数，越大越鼓励探索，这里设为0表示不额外提供熵奖励
+  value_loss_scale: 2.0  # 价值网络损失函数在总损失中的权重系数
+  kl_threshold: 0.0  # 提前终止更新的KL散度阈值，0.0表示不使用固定阈值强制截断 epoch
+  rewards_shaper_scale: 0.1  # 对环境返回的奖励进行缩放的系数（乘以0.1），避免奖励数值过大导致训练不稳定
+  time_limit_bootstrap: False  # 是否对由于达到最大时间限制而结束的回合进行价值自举（这里不当作特殊回合处理）
+  # logging and checkpoint
+  experiment:
+    directory: "cartpole_direct"  # 日志和模型保存的根文件夹名称（你可以把它改成如 "demo_learn_logs"）
+    experiment_name: ""  # 具体的实验名称，如果不填会自动带上时间戳和算法名生成文件夹
+    write_interval: auto  # Tensorboard日志写入的频率，auto表示根据算法自动决定（通常是每次更新后写一次）
+    checkpoint_interval: auto  # 保存模型权重的频率，auto表示自动决定保存节奏
+
+
+# Sequential trainer
+# https://skrl.readthedocs.io/en/latest/api/trainers/sequential.html
+trainer:
+  class: SequentialTrainer  # 训练器类型，Sequential代表经典的按顺序执行：先在环境中收集数据，然后暂停仿真去更新模型网络
+  timesteps: 10000  # 训练循环停止前，每个环境总共要走的步数（控制训练总时长）
+  environment_info: log  # 将环境的信息（如Reward、Episode长度）输出到日志/控制台
