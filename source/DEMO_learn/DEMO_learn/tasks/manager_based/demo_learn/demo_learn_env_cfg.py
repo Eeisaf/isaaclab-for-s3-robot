@@ -1,10 +1,11 @@
 import math
 import os
-import random
 
 import isaaclab.sim as sim_utils
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
+from isaaclab.managers import CurriculumTermCfg as CurriculumTerm
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -13,13 +14,17 @@ from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
-from isaaclab.envs.mdp.commands.commands_cfg import UniformPoseCommandCfg
 
 from . import mdp
 
 TRUNK_ROBOT_USD_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../trunk_robot/trunk_robot.usd"))
+END_EFFECTOR_BODY_NAME = "trunk_link4"
+REACHABLE_TARGETS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "reachable_targets.pt"))
 
-from isaaclab.actuators import ImplicitActuatorCfg
+
+def ee_cfg() -> SceneEntityCfg:
+    """Return the end-effector entity used consistently by observations and rewards."""
+    return SceneEntityCfg("robot", body_names=[END_EFFECTOR_BODY_NAME])
 
 TRUNK_ROBOT_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
@@ -36,21 +41,28 @@ TRUNK_ROBOT_CFG = ArticulationCfg(
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=False,  # 是否允许机器人的不同连杆之间发生自碰撞
             solver_position_iteration_count=4,  # 物理引擎求解器：位置迭代次数，数值越大越精确但越耗时
-            solver_velocity_iteration_count=0   # 物理引擎求解器：速度迭代次数
+            solver_velocity_iteration_count=0,  # 物理引擎求解器：速度迭代次数
+            fix_root_link=True,  # 固定根链接，避免“机器人躺倒后目标随基座漂移”
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.0),  # 机器人的初始三维空间坐标位置 (X, Y, Z)，单位：m
-        joint_pos={".*": 0.0},  # 所有关节的初始角度/位置，".*"为正则匹配所有，0.0为初始值。如果是转动关节，单位是 rad(弧度)；移动关节单位是 m(米)
+        # 固定预弯曲姿态：避免从全零伸直/奇异姿态开始探索。
+        joint_pos={
+            "trunk_joint1": 0.8,
+            "trunk_joint2": -1.3,
+            "trunk_joint3": 1.2,
+            "trunk_joint4": 0.0,
+        },
         joint_vel={".*": 0.0},  # 所有关节的初始速度。单位：rad/s 或 m/s
     ),
     actuators={
         "all": ImplicitActuatorCfg(
             joint_names_expr=[".*"],  # 指定该驱动器控制哪些关节，".*"代表所有
             effort_limit=100.0,  # 关节驱动的最大力/力矩限制，单位：N 或 N·m
-            velocity_limit=10.0,  # 关节的最大速度限制，单位：rad/s 或 m/s
-            stiffness=800.0,  # PD控制器的刚度系数（Kp），相当于弹簧的硬度，影响向目标位置移动的力度
-            damping=40.0,  # PD控制器的阻尼系数（Kd），相当于阻力，用于抑制震荡
+            velocity_limit=3.0,  # 关节的最大速度限制，单位：rad/s 或 m/s
+            stiffness=4000.0,  # PD控制器的刚度系数（Kp），相当于弹簧的硬度，影响向目标位置移动的力度
+            damping=100.0,  # PD控制器的阻尼系数（Kd），相当于阻力，用于抑制震荡
         ),
     },
 )
@@ -58,12 +70,6 @@ TRUNK_ROBOT_CFG = ArticulationCfg(
 @configclass
 class DemoLearnSceneCfg(InteractiveSceneCfg):
     """Configuration for the trunk robot scene."""
-
-    # ground plane
-    ground = AssetBaseCfg(
-        prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),  # 生成 100m x 100m 的物理地面，单位：m
-    )
 
     # robot
     robot: ArticulationCfg = TRUNK_ROBOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
@@ -77,29 +83,56 @@ class DemoLearnSceneCfg(InteractiveSceneCfg):
 @configclass
 class CommandsCfg:
     """Command specifications for the MDP."""
-    target_pose = UniformPoseCommandCfg(
+    target_pose = mdp.AnnulusPoseCommandCfg(
         asset_name="robot",
-        body_name=".*", # we will override this logic or ignore it if not needed, but UniformPoseCommand requires it
-        resampling_time_range=(5.0, 5.0),  # 指令多久重新采样一次（即多久下发一次新目标），单位：秒(s)。这里是固定每 5 秒换一次目标。
-        debug_vis=True,  # 是否在可视化界面中显示目标位置的虚拟标记
-        ranges=UniformPoseCommandCfg.Ranges(
-            pos_x=(-0.5, 0.5),         # X轴目标范围（前后移动），单位：m
-            pos_y=(0.0, 0.0),          # Y轴固定为0。因为是平面机器人，必须限制在竖直 X-Z 平面内。
-            pos_z=(0.5, 1),          # Z轴目标高度范围（上下移动），单位：m
-            roll=(-math.pi, math.pi),           # 平面机器人不应该有 Roll (绕X轴) 旋转
-            pitch=(-math.pi, math.pi), # 目标姿态 pitch (俯仰角，即绕Y轴的旋转)，平面内唯一自由的旋转角
-            yaw=(0.0, 0.0),            # 平面机器人不应该有 Yaw (绕Z轴) 旋转
+        body_name=END_EFFECTOR_BODY_NAME,
+        resampling_time_range=(30.0, 30.0),  # 指令多久重新采样一次；与30s episode对齐，避免目标中途变化。
+        debug_vis=False,  # 训练时关闭目标可视化，避免联网加载 Isaac marker USD 失败
+        # 圆环采样参数：在 base frame 的 X-Z 平面以(center_x, center_z)为圆心采样可达目标
+        center_x=0.0,
+        center_z=0.0,
+        radius_min=0.25, # 避开靠近基座的奇异/高曲率区域
+        radius_max=0.65, # 覆盖测试常用目标，例如 (x=0.15, z=0.60) 的半径约0.62m
+        uniform_area=True,
+        theta_min=0.35,  # 避免接近水平边界的困难目标
+        theta_max=math.pi - 0.35,
+        sample_reachable_poses=False, # 不再从当前末端集合采样，避免训练目标分布塌缩导致虚高成功率
+        reachable_targets_path=REACHABLE_TARGETS_PATH, # 从离线FK点云采样，确保每个训练目标真实可达
+        ranges=mdp.AnnulusPoseCommandCfg.Ranges(
+            pos_x=(-0.2, 0.2),  # 占位参数：AnnulusPoseCommand 不使用 pos_x
+            pos_y=(0, 0),       # Y轴固定为0（平面任务）
+            pos_z=(0.5, 0.8),   # 占位参数：AnnulusPoseCommand 不使用 pos_z
+            # 位置任务只使用 target_pose 的 xyz；姿态固定为单位四元数，避免观测混入无关随机量。
+            roll=(0.0, 0.0),  # 目标姿态 roll (横滚角) 范围，单位：rad
+            pitch=(0.0, 0.0), # 目标姿态 pitch (俯仰角) 范围，单位：rad
+            yaw=(0.0, 0.0),   # 目标姿态 yaw (偏航角) 范围，单位：rad
+        ),
+    )
+    target_joint4 = mdp.UniformJointCommandCfg(
+        resampling_time_range=(30.0, 30.0),
+        debug_vis=False,
+        ranges=mdp.UniformJointCommandCfg.Ranges(
+            joint_pos=(0.0, 0.0), # 位置任务先锁定第4关节，避免随机本体转角干扰前三关节到达目标
         ),
     )
 
 @configclass
 class ActionsCfg:
     """Action specifications for the MDP."""
-    # 策略网络输出的动作类型：关节位置控制 (JointPositionAction)
-    joint_position = mdp.JointPositionActionCfg(
-        asset_name="robot", 
-        joint_names=[".*"], 
-        scale=1.0  # scale: 对网络输出动作的缩放系数。网络输出一般在[-1,1]之间，会被乘以scale作为最终发给控制器的目标指令。单位与关节类型有关(rad 或 m)
+    # 前 3 个关节由网络输出关节位置增量；0.05 rad @ 60Hz 约等于 3 rad/s
+    joint_position_delta = mdp.DeltaJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["trunk_joint1", "trunk_joint2", "trunk_joint3"], # 只控制前三个关节
+        scale=0.05,
+        joint_limits=[(-1.57, 1.57), (-1.57, 1.57), (-1.57, 1.57)],
+    )
+
+    # 第 4 关节直接读取指令，不经过神经网络
+    direct_joint4 = mdp.DirectJointCommandActionCfg(
+        asset_name="robot",
+        joint_name="trunk_joint4",
+        command_name="target_joint4",
+        command_index=0
     )
 
 
@@ -113,8 +146,9 @@ class ObservationsCfg:
 
         joint_pos = ObsTerm(func=mdp.joint_pos_rel) # 相对关节位置 (相对于默认状态)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel) # 相对关节速度
-        end_effector_pose = ObsTerm(func=mdp.end_effector_pose, params={"asset_cfg": SceneEntityCfg("robot")}) # 末端执行器位姿
+        end_effector_pose = ObsTerm(func=mdp.end_effector_pose, params={"asset_cfg": ee_cfg()}) # 末端执行器位姿
         target_pose = ObsTerm(func=mdp.target_pose) # 目标位姿
+        position_error = ObsTerm(func=mdp.position_error, params={"asset_cfg": ee_cfg()}) # 目标位置误差
 
         def __post_init__(self) -> None:
             self.enable_corruption = False  # 是否为观测值加入随机噪声（用于模拟真实传感器的误差，做sim2real迁移时常打开）
@@ -128,12 +162,25 @@ class ObservationsCfg:
 class EventCfg:
     """Configuration for events."""
     reset_robot = EventTerm(
-        func=mdp.reset_joints_by_scale,
+        func=mdp.reset_joints_by_offset,
         mode="reset",  # 触发时机：在环境 reset（回合重置）时触发
         params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=[".*"]),
-            "position_range": (0.0, 0.0),  # 重置时对初始位置加入的随机扰动范围。0.0表示严格回到初始位置，不加扰动。单位：依赖底层函数的实现，通常是乘数因子
-            "velocity_range": (0.0, 0.0),  # 重置时对初始速度加入的随机扰动范围。
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=["trunk_joint1", "trunk_joint2", "trunk_joint3"],
+            ),
+            "position_range": (0.0, 0.0),  # 第一阶段固定初始姿态，先建立可验证的闭集目标分布。
+            "velocity_range": (0.0, 0.0),
+        },
+    )
+
+    reset_joint4 = EventTerm(
+        func=mdp.reset_joints_by_scale,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["trunk_joint4"]),
+            "position_range": (1.0, 1.0),  # 第4关节保持默认0位，由 DirectJointCommandAction 锁定
+            "velocity_range": (0.0, 0.0),
         },
     )
 
@@ -142,72 +189,123 @@ class EventCfg:
 class RewardsCfg:
     """Reward terms for the MDP."""
 
-    alive = RewTerm(func=mdp.is_alive, weight=1.0) # 存活奖励：每存活一个步长给予 1.0 的奖励权重
-    
-    terminating = RewTerm(func=mdp.is_terminated, weight=-10.0) # 终止惩罚：如果因为失败条件触发终止（如提前摔倒），一次性扣除 10.0 分
-    
-    # Task specific rewards
-    target_pos_tracking = RewTerm(
-        func=mdp.end_effector_position_tracking,
-        weight=10.0, # 追踪目标位置的奖励权重：10.0
-        params={"asset_cfg": SceneEntityCfg("robot"), "std": 0.1} # std: 计算高斯衰减函数的距离标准差，越小要求越严苛。单位：m
-    )
-    
-    target_ori_tracking = RewTerm(
-        func=mdp.end_effector_orientation_tracking,
-        weight=5.0, # 追踪目标姿态的奖励权重：5.0
-        params={"asset_cfg": SceneEntityCfg("robot"), "std": 0.1} # std: 旋转四元数误差衰减的标准差
-    )
-    
-    # Phase specific
-    upright_penalty = RewTerm(
-        func=mdp.upright_posture_penalty,
-        weight=-2.0, # 偏离直立姿态的惩罚权重：-2.0
-        params={"asset_cfg": SceneEntityCfg("robot")}
-    )
-    
-    phase_joint_penalty = RewTerm(
-        func=mdp.phase_based_penalty,
-        weight=-5.0, # 高度达标后约束底层关节乱动的惩罚权重：-5.0
-        params={"asset_cfg": SceneEntityCfg("robot"), "height_threshold": 0.05, "frozen_joints": [0, 1]} 
-        # frozen_joints=[0, 1, 2] 表示：到达高度后，锁定前三个关节，专门留出最后一个关节去调姿态
+    # 动作平滑惩罚（防止原地高频抽搐和抖动）
+    action_rate_penalty = RewTerm(
+        func=mdp.action_rate_l2,
+        weight=-0.001 # 进一步降低动作变化惩罚，鼓励探索
     )
 
-    # Joint limit penalty (random weight)
-    joint_limit = RewTerm(
-        func=mdp.joint_limit_penalty,
-        weight=-random.uniform(1.0, 5.0), # 关节越界惩罚权重：每次运行环境时在 [-5.0, -1.0] 之间随机抽取（域随机化技术）
-        params={"asset_cfg": SceneEntityCfg("robot"), "bounds": [
-            (-math.pi / 2, math.pi / 2),   # 关节 0 的限制 (-90度 到 90度)，单位：rad
-            (-2 * math.pi / 4, 2 * math.pi / 4),   # 关节 1 的限制 (-120度 到 120度)，单位：rad
-            (-math.pi / 3, math.pi / 3),   # 关节 2 的限制 (-60度 到 60度)，单位：rad
-            (-math.pi / 2, math.pi / 2)            # 关节 3 的限制 (-90度 到 90度)，单位：rad
-        ]}
+    episode_time_penalty = RewTerm(
+        func=mdp.time_penalty,
+        weight=-0.1 # 每秒持续扣分，避免策略在目标附近拖到超时
     )
+
+    # Task specific rewards
+    target_pos_error = RewTerm(
+        func=mdp.end_effector_position_error,
+        weight=-10.0, # 直接惩罚距离；不再让机器人靠近目标后按时间刷正奖励
+        params={"asset_cfg": ee_cfg()}
+    )
+
+    target_pos_error_squared = RewTerm(
+        func=mdp.end_effector_position_error_squared,
+        weight=-20.0, # 大误差额外惩罚，帮助早期从远处拉回目标区域
+        params={"asset_cfg": ee_cfg()}
+    )
+
+    target_pos_excess_error = RewTerm(
+        func=mdp.end_effector_position_excess_error,
+        weight=-30.0, # 只惩罚5cm成功圈外的剩余误差，强化最后十几厘米的进圈压力
+        params={
+            "asset_cfg": ee_cfg(),
+            "pos_threshold": 0.05,
+        }
+    )
+
+    mid_pos_tracking = RewTerm(
+        func=mdp.end_effector_position_fine_tracking,
+        weight=2.0, # 中距离引导：帮助增量控制策略先从20cm量级进入10cm量级
+        params={"asset_cfg": ee_cfg(), "std": 0.15}
+    )
+
+    fine_pos_tracking = RewTerm(
+        func=mdp.end_effector_position_fine_tracking,
+        weight=3.0, # 小权重精度奖励：强化5cm附近梯度，但避免靠近目标刷分压过终止奖励
+        params={"asset_cfg": ee_cfg(), "std": 0.05}
+    )
+
+    up_axis_error = RewTerm(
+        func=mdp.end_effector_up_axis_error,
+        weight=-2.0, # 约束末端局部+Z保持与基坐标+Z平行，消除三连杆位置任务的连续冗余解。
+        params={"asset_cfg": ee_cfg()}
+    )
+
+    # 过程奖励：靠近目标奖励，远离目标惩罚
+    approach_target = RewTerm(
+        func=mdp.approach_target_reward,
+        weight=1.0, # 保留靠近目标的方向引导，但避免速度项主导奖励
+        params={"asset_cfg": ee_cfg()}
+    )
+
+    # 任务达成终极奖励
+    target_reached_bonus = RewTerm(
+        func=mdp.target_reached_bonus,
+        weight=3000.0,
+        params={
+            "asset_cfg": ee_cfg(),
+            "pos_threshold": 0.05,
+            "up_axis_threshold": 0.98,
+        }
+    )
+
+    # 成功率使用 Curriculum/all_env_pos_success 和 Episode_Termination/target_reached 监控；
+    # 不再把 success_count 作为奖励项，避免它参与优化并混淆 TensorBoard 奖励曲线。
 
 @configclass
 class TerminationsCfg:
     """Termination terms for the MDP."""
     time_out = DoneTerm(func=mdp.time_out, time_out=True) # 超时终止：如果回合运行时间到达 episode_length_s 的上限，正常结束并重置
-    
+
+    # 目标到达终止：重新启用！并在Rewards中搭配了巨大的成功奖励。
     target_reached = DoneTerm(
         func=mdp.reached_target_pose,
         params={
-            "asset_cfg": SceneEntityCfg("robot"), 
+            "asset_cfg": ee_cfg(),
             "pos_threshold": 0.05, # pos_threshold: 位置到达的判定容差阈值，单位：m。距离目标小于 5cm 即视为到达。
-            "quat_threshold": 0.1  # quat_threshold: 旋转到达的判定容差阈值（基于四元数差异计算的数值，无单位）。
+            "up_axis_threshold": 0.98, # 末端局部+Z与基坐标+Z夹角约小于11.5度。
+        }
+    )
+
+@configclass
+class CurriculumCfg:
+    """Curriculum terms for the MDP."""
+
+    # 注意：CurriculumManager 只在 reset env_ids 上触发。这里的函数会忽略 env_ids，
+    # 统计所有并行环境的当前状态，避免 reset batch 成功率被误读成全局成功率。
+    all_env_pos_success = CurriculumTerm(
+        func=mdp.log_all_env_pos_success,
+        params={
+            "asset_cfg": ee_cfg(),
+            "pos_threshold": 0.05,
+        }
+    )
+    all_env_pos_error = CurriculumTerm(
+        func=mdp.log_all_env_pos_error,
+        params={
+            "asset_cfg": ee_cfg(),
         }
     )
 
 @configclass
 class DemoLearnEnvCfg(ManagerBasedRLEnvCfg):
     # Scene settings
-    scene: DemoLearnSceneCfg = DemoLearnSceneCfg(num_envs=256, env_spacing=4.0) # num_envs: 并行模拟的机器人数量；env_spacing: 每个机器人互相隔开的距离，单位：m
+    scene: DemoLearnSceneCfg = DemoLearnSceneCfg(num_envs=4096, env_spacing=4.0) # num_envs: 并行模拟的机器人数量；env_spacing: 每个机器人互相隔开的距离，单位：m
     # Basic settings
     commands: CommandsCfg = CommandsCfg()
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     events: EventCfg = EventCfg()
+    curriculum: CurriculumCfg = CurriculumCfg()
     # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
@@ -216,7 +314,7 @@ class DemoLearnEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self) -> None:
         """Post initialization."""
         self.decimation = 2 # 控制降采样率（跳帧数）：物理引擎每计算 decimation 步，神经网络才下发一次动作。单位：物理仿真步数
-        self.episode_length_s = 10.0 # 单个回合(Episode)的最大存活时长，单位：秒(s)
+        self.episode_length_s = 30.0 # 单个回合(Episode)的最大存活时长，单位：秒(s)
         self.viewer.eye = (3.0, 3.0, 3.0) # 图形界面打开时，观察相机的初始位置 (X, Y, Z)，单位：m
         self.sim.dt = 1 / 120 # 物理引擎的底层仿真步长（每一帧流逝的时间），单位：秒(s)。此例中约等于 0.0083s
         self.sim.render_interval = self.decimation # 渲染间隔，通常设为和 decimation 一样，避免无意义的画面渲染浪费性能

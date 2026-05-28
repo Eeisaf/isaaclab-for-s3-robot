@@ -26,6 +26,8 @@ def end_effector_pose(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torc
     
     # 获取末端执行器在世界坐标系下的 3D 位置 (X, Y, Z)
     pos = asset.data.body_pos_w[:, body_id, :]
+    # 转换为相对于机器人基座的局部坐标系位置 (Base Frame)
+    pos = pos - asset.data.root_pos_w
     # 获取末端执行器在世界坐标系下的 4D 旋转四元数 (W, X, Y, Z)
     quat = asset.data.body_quat_w[:, body_id, :]
     
@@ -45,3 +47,26 @@ def target_pose(env: ManagerBasedRLEnv) -> torch.Tensor:
     """
     # 从环境的指令管理器(command_manager)中读取名为 "target_pose" 的指令
     return env.command_manager.get_command("target_pose")
+
+def position_error(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """
+    获取末端执行器当前位置与目标位置之间的误差向量。
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    if asset_cfg.body_ids is not None and not isinstance(asset_cfg.body_ids, slice) and len(asset_cfg.body_ids) > 0:
+        body_id = asset_cfg.body_ids[0]
+    else:
+        body_id = -1
+        
+    # 获取末端执行器在世界坐标系下的 3D 位置 (X, Y, Z)
+    ee_pos_w = asset.data.body_pos_w[:, body_id, :]
+    # 转换为相对于机器人基座的局部坐标系位置
+    ee_pos = ee_pos_w - asset.data.root_pos_w
+    
+    # 获取目标位置
+    target_command = env.command_manager.get_command("target_pose")
+    target_pos = target_command[:, :3]
+    
+    # 返回误差向量 (目标 - 当前)
+    return target_pos - ee_pos
