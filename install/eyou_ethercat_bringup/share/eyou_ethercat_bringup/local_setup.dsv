@@ -1,0 +1,2 @@
+source;share/eyou_ethercat_bringup/environment/ament_prefix_path.sh
+source;share/eyou_ethercat_bringup/environment/path.sh

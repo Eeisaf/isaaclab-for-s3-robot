@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- Full trunk kinematics (robot_model) + EtherCAT CiA402 drives on trunk_joint1..4.
+     Joint names and ros2_control joint order match trunk_configure / MoveIt. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="trunk_robot">
+  <xacro:include filename="$(find robot_model)/urdf/trunk_robot.urdf"/>
+  <xacro:include filename="$(find eyou_ethercat_bringup)/urdf/trunk_ethercat.ros2_control.xacro"/>
+  <xacro:trunk_ethercat_ros2_control slave_config_path="$(find eyou_ethercat_bringup)/config/eyou_slave.yaml" reversed_slave_config_path="$(find eyou_ethercat_bringup)/config/eyou_slave_reverse.yaml"/>
+
+</robot>

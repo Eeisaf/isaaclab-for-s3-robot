@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- 虚拟测试专用的 URDF 入口文件 -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="trunk_robot">
+  <!-- 引入真实的机器人模型 -->
+  <xacro:include filename="$(find robot_model)/urdf/trunk_robot.urdf"/>
+  <!-- 引入虚拟的 ros2_control 硬件接口 -->
+  <xacro:include filename="$(find eyou_ethercat_bringup)/urdf/trunk_mock.ros2_control.xacro"/>
+  
+  <!-- 实例化虚拟硬件 -->
+  <xacro:trunk_mock_ros2_control/>
+</robot>

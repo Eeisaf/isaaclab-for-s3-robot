@@ -49,9 +49,9 @@ TRUNK_ROBOT_CFG = ArticulationCfg(
         pos=(0.0, 0.0, 0.0),  # 机器人的初始三维空间坐标位置 (X, Y, Z)，单位：m
         # 固定预弯曲姿态：避免从全零伸直/奇异姿态开始探索。
         joint_pos={
-            "trunk_joint1": 0.8,
-            "trunk_joint2": -1.3,
-            "trunk_joint3": 1.2,
+            "trunk_joint1": 0.0,
+            "trunk_joint2": 0.0,
+            "trunk_joint3": 0.0,
             "trunk_joint4": 0.0,
         },
         joint_vel={".*": 0.0},  # 所有关节的初始速度。单位：rad/s 或 m/s
@@ -59,10 +59,10 @@ TRUNK_ROBOT_CFG = ArticulationCfg(
     actuators={
         "all": ImplicitActuatorCfg(
             joint_names_expr=[".*"],  # 指定该驱动器控制哪些关节，".*"代表所有
-            effort_limit=100.0,  # 关节驱动的最大力/力矩限制，单位：N 或 N·m
-            velocity_limit=3.0,  # 关节的最大速度限制，单位：rad/s 或 m/s
-            stiffness=4000.0,  # PD控制器的刚度系数（Kp），相当于弹簧的硬度，影响向目标位置移动的力度
-            damping=100.0,  # PD控制器的阻尼系数（Kd），相当于阻力，用于抑制震荡
+            effort_limit=61.0,  # 关节驱动的最大力/力矩限制，单位：N 或 N·m
+            velocity_limit=1.0,  # 关节的最大速度限制，单位：rad/s 或 m/s
+            stiffness=1000.0,  # PD控制器的刚度系数（Kp），相当于弹簧的硬度，影响向目标位置移动的力度
+            damping=30.0,  # PD控制器的阻尼系数（Kd），相当于阻力，用于抑制震荡
         ),
     },
 )
@@ -88,21 +88,14 @@ class CommandsCfg:
         body_name=END_EFFECTOR_BODY_NAME,
         resampling_time_range=(30.0, 30.0),  # 指令多久重新采样一次；与30s episode对齐，避免目标中途变化。
         debug_vis=False,  # 训练时关闭目标可视化，避免联网加载 Isaac marker USD 失败
-        # 圆环采样参数：在 base frame 的 X-Z 平面以(center_x, center_z)为圆心采样可达目标
-        center_x=0.0,
-        center_z=0.0,
-        radius_min=0.25, # 避开靠近基座的奇异/高曲率区域
-        radius_max=0.65, # 覆盖测试常用目标，例如 (x=0.15, z=0.60) 的半径约0.62m
-        uniform_area=True,
-        theta_min=0.35,  # 避免接近水平边界的困难目标
-        theta_max=math.pi - 0.35,
-        sample_reachable_poses=False, # 不再从当前末端集合采样，避免训练目标分布塌缩导致虚高成功率
-        reachable_targets_path=REACHABLE_TARGETS_PATH, # 从离线FK点云采样，确保每个训练目标真实可达
+        # 从离线FK点云采样，确保每个训练目标真实可达。
+        # 注意：由于 reachable_targets_path 被设置，AnnulusPoseCommand 将忽略内置的圆环随机采样逻辑。
+        sample_reachable_poses=False, 
+        reachable_targets_path=REACHABLE_TARGETS_PATH, 
         ranges=mdp.AnnulusPoseCommandCfg.Ranges(
-            pos_x=(-0.2, 0.2),  # 占位参数：AnnulusPoseCommand 不使用 pos_x
-            pos_y=(0, 0),       # Y轴固定为0（平面任务）
-            pos_z=(0.5, 0.8),   # 占位参数：AnnulusPoseCommand 不使用 pos_z
-            # 位置任务只使用 target_pose 的 xyz；姿态固定为单位四元数，避免观测混入无关随机量。
+            pos_x=(-0.2, 0.2),  # 占位参数：使用点云时被忽略
+            pos_y=(0, 0),       # 占位参数：使用点云时被忽略
+            pos_z=(0.5, 0.8),   # 占位参数：使用点云时被忽略
             roll=(0.0, 0.0),  # 目标姿态 roll (横滚角) 范围，单位：rad
             pitch=(0.0, 0.0), # 目标姿态 pitch (俯仰角) 范围，单位：rad
             yaw=(0.0, 0.0),   # 目标姿态 yaw (偏航角) 范围，单位：rad
@@ -286,7 +279,7 @@ class CurriculumCfg:
         func=mdp.log_all_env_pos_success,
         params={
             "asset_cfg": ee_cfg(),
-            "pos_threshold": 0.05,
+            "pos_threshold": 0.02,
         }
     )
     all_env_pos_error = CurriculumTerm(

@@ -1,0 +1,50 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    trunk_group_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+joint_state_broadcaster:
+  ros__parameters:
+    interfaces:
+      - position
+      - velocity
+      - effort
+
+trunk_group_controller:
+  ros__parameters:
+    joints:
+      - trunk_joint1
+      - trunk_joint2
+      - trunk_joint3
+      - trunk_joint4
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+      - velocity
+
+    allow_partial_joints_goal: false
+    open_loop_control: false
+    
+    # constraints:
+    #   goal_time: 0.0
+    #   stopped_velocity_tolerance: 0.01
+    #   trunk_joint1:
+    #     trajectory: 0.05
+    #     goal: 0.03
+    #   trunk_joint2:
+    #     trajectory: 0.05
+    #     goal: 0.03
+    #   trunk_joint3:
+    #     trajectory: 0.05
+    #     goal: 0.03
+    #   trunk_joint4:
+    #     trajectory: 0.05
+    #     goal: 0.03

@@ -1,0 +1,41 @@
+vendor_id: 0x00001097
+product_id: 0x00010002
+
+assign_activate: 0x0300
+auto_fault_reset: false
+
+sdo: []
+
+rpdo:
+  - index: 0x1600
+    channels:
+      - {index: 0x6040, sub_index: 0, type: uint16, default: 0}                         # Controlword
+      - {index: 0x6060, sub_index: 0, type: int8,   default: 8}                         # Modes of operation = CSP
+      - {index: 0x607A, sub_index: 0, type: int32,  command_interface: position, factor: -10096606.2432554, default: 0}  # Target Position
+      - {index: 0x6081, sub_index: 0, type: uint32, default: 1000}                    # Profile Velocity
+      - {index: 0x60FF, sub_index: 0, type: int32,  default: 0}                         # Target Velocity
+      - {index: 0x240D, sub_index: 0, type: uint32, default: 1000}                    # Torque Mode Velocity Limit
+      - {index: 0x6071, sub_index: 0, type: int16,  default: 0}                         # Target Torque
+      - {index: 0x6083, sub_index: 0, type: uint32, default: 1000}                    # Profile Acceleration
+      - {index: 0x6084, sub_index: 0, type: uint32, default: 1000}                    # Profile Deceleration
+      - {index: 0x6087, sub_index: 0, type: uint32, default: 1000}                    # Torque Slope
+
+tpdo:
+  - index: 0x1A00
+    channels:
+      - {index: 0x6041, sub_index: 0, type: uint16}                                     # Statusword
+      - {index: 0x6061, sub_index: 0, type: int8}                                       # Modes Of Operation Display
+      - {index: 0x603F, sub_index: 0, type: uint16}                                     # Error Code
+      - {index: 0x6064, sub_index: 0, type: int32, state_interface: position, factor: -9.904318103600473e-08}           # Position Actual Value
+      - {index: 0x606C, sub_index: 0, type: int32, state_interface: velocity}           # Velocity Actual Value
+      - {index: 0x6077, sub_index: 0, type: int16, state_interface: effort}             # Torque Actual Value
+      - {index: 0x6074, sub_index: 0, type: int16}                                      # Torque Demand Value
+      - {index: 0x60F4, sub_index: 0, type: int32}                                      # Following Error Actual Value
+      - {index: 0x6079, sub_index: 0, type: uint32}                                     # DC Link Circuit Voltage
+      - {index: 0x60FD, sub_index: 0, type: uint32}                                     # Digital Inputs
+
+sm:
+  - {index: 0, type: output, pdo: ~,    watchdog: disable}
+  - {index: 1, type: input,  pdo: ~,    watchdog: disable}
+  - {index: 2, type: output, pdo: rpdo, watchdog: enable}
+  - {index: 3, type: input,  pdo: tpdo, watchdog: disable}

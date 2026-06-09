@@ -1,0 +1,15 @@
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  controller_names:
+    - trunk_group_controller
+
+  trunk_group_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - trunk_joint1
+      - trunk_joint2
+      - trunk_joint3
+      - trunk_joint4

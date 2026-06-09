@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<robot name="eyou_drive">
+
+  <!-- Minimal links -->
+  <link name="base_link"/>
+  <link name="motor_link"/>
+
+  <!-- One rotary joint -->
+  <joint name="motor_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="motor_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <ros2_control name="eyou_system" type="system">
+    <hardware>
+      <plugin>ethercat_driver/EthercatDriver</plugin>
+      <param name="master_id">0</param>
+      <param name="control_frequency">500</param>
+    </hardware>
+
+    <joint name="motor_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+
+      <ec_module name="eyou_drive">
+        <plugin>ethercat_generic_plugins/EcCiA402Drive</plugin>
+        <param name="alias">0</param>
+        <param name="position">0</param>
+        <param name="mode_of_operation">8</param>
+        <param name="slave_config">/home/ubuntu/ros2_ethercat_ws/src/eyou_ethercat_bringup/config/eyou_slave.yaml</param>
+      </ec_module>
+    </joint>
+  </ros2_control>
+
+</robot>

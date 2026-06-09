@@ -1,0 +1,1 @@
+controller_manager:ethercat_driver:ethercat_generic_cia402_drive:forward_command_controller:joint_state_broadcaster:joint_trajectory_controller:robot_model:robot_state_publisher:xacro
